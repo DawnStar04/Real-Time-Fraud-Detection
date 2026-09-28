@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fraud Monitor</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #151b23; --panel-2: #1c232d; --line: #2a323d;
+    --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff;
+    --block: #f85149; --review: #d29922; --ok: #3fb950;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+  header {
+    padding: 16px 20px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  }
+  h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  .live { font-size: 11px; color: var(--ok); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  .stats {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 1px; background: var(--line); border-bottom: 1px solid var(--line);
+  }
+  .stat { background: var(--bg); padding: 14px 20px; }
+  .stat .label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .05em; }
+  .stat .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  main { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); min-height: calc(100vh - 140px); }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .col { min-width: 0; }
+  .col + .col { border-left: 1px solid var(--line); }
+  @media (max-width: 860px) { .col + .col { border-left: 0; border-top: 1px solid var(--line); } }
+  .col-head {
+    padding: 10px 20px; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--dim); border-bottom: 1px solid var(--line);
+  }
+  .feed { max-height: calc(100vh - 190px); overflow-y: auto; }
+  .alert {
+    padding: 12px 20px; border-bottom: 1px solid var(--line); cursor: pointer;
+    display: grid; grid-template-columns: 62px 1fr auto; gap: 12px; align-items: center;
+  }
+  .alert:hover { background: var(--panel); }
+  .alert.sel { background: var(--panel-2); box-shadow: inset 2px 0 0 var(--accent); }
+  .tag {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; text-align: center;
+    padding: 3px 0; border-radius: 3px; letter-spacing: .04em;
+  }
+  .tag.block { background: rgba(248,81,73,.15); color: var(--block); }
+  .tag.review { background: rgba(210,153,34,.15); color: var(--review); }
+  .amt { font-family: var(--mono); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .sub { font-size: 12px; color: var(--dim); font-family: var(--mono); }
+  .prob { font-family: var(--mono); font-size: 15px; font-weight: 600; text-align: right; }
+  .truth { font-size: 10px; text-align: right; margin-top: 2px; }
+  .truth.tp { color: var(--ok); } .truth.fp { color: var(--dim); }
+  .detail { padding: 20px; }
+  .empty { padding: 40px 20px; color: var(--dim); text-align: center; }
+  .why { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--dim); margin: 20px 0 10px; }
+  .reason { margin-bottom: 12px; }
+  .reason .txt { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  .reason .contrib { font-family: var(--mono); font-size: 12px; color: var(--block); flex-shrink: 0; }
+  .bar { height: 5px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: linear-gradient(90deg, #d29922, var(--block)); }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; font-size: 13px; }
+  .kv dt { color: var(--dim); } .kv dd { margin: 0; font-family: var(--mono); }
+  .note { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--dim); }
+  .err { padding: 20px; color: var(--review); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Real-time fraud monitor</h1>
+  <span class="live"><span class="dot"></span>polling /alerts every 2s</span>
+</header>
+
+<div class="stats" id="stats"></div>
+
+<main>
+  <div class="col">
+    <div class="col-head">Flagged transactions</div>
+    <div class="feed" id="feed"><div class="empty">Waiting for transactions&hellip;<br><span class="sub">run: python simulate.py --rate 20</span></div></div>
+  </div>
+  <div class="col">
+    <div class="col-head">Why it was flagged</div>
+    <div class="detail" id="detail"><div class="empty">Select an alert.</div></div>
+  </div>
+</main>
+
+<script>
+const API = localStorage.getItem('fraudApi') || 'http://localhost:8000';
+let alerts = [], selected = null;
+
+const fmt = n => n.toLocaleString(undefined, {maximumFractionDigits: 0});
+
+async function poll() {
+  try {
+    const [a, s] = await Promise.all([
+      fetch(`${API}/alerts?limit=50`).then(r => r.json()),
+      fetch(`${API}/stats`).then(r => r.json()),
+    ]);
+    alerts = a.alerts;
+    renderStats(s);
+    renderFeed();
+    if (selected === null && alerts.length) select(0);
+  } catch (e) {
+    document.getElementById('feed').innerHTML =
+      `<div class="err">Can't reach ${API}. Is the API running?</div>`;
+  }
+}
+
+function renderStats(s) {
+  const cards = [
+    ['Scored', fmt(s.scored)],
+    ['Flagged', fmt(s.review + s.block)],
+    ['Alert rate', (s.alert_rate * 100).toFixed(2) + '%'],
+    ['Recall', s.recall === null ? '—' : (s.recall * 100).toFixed(1) + '%'],
+    ['p50 latency', s.p50_latency_ms === null ? '—' : s.p50_latency_ms.toFixed(1) + ' ms'],
+    ['p95 latency', s.p95_latency_ms === null ? '—' : s.p95_latency_ms.toFixed(1) + ' ms'],
+  ];
+  document.getElementById('stats').innerHTML = cards.map(([l, v]) =>
+    `<div class="stat"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+}
+
+function renderFeed() {
+  const el = document.getElementById('feed');
+  if (!alerts.length) return;
+  el.innerHTML = alerts.map((a, i) => {
+    // actual_label is only present when replaying labelled historical data.
+    const truth = a.actual_label === null || a.actual_label === undefined ? ''
+      : a.actual_label === 1
+        ? '<div class="truth tp">confirmed fraud</div>'
+        : '<div class="truth fp">false positive</div>';
+    return `<div class="alert ${i === selected ? 'sel' : ''}" onclick="select(${i})">
+      <div class="tag ${a.decision}">${a.decision}</div>
+      <div>
+        <div class="amt">${fmt(a.amount)}</div>
+        <div class="sub">${a.card_id} &middot; ${a.merchant}</div>
+      </div>
+      <div>
+        <div class="prob" style="color:${a.decision === 'block' ? 'var(--block)' : 'var(--review)'}">
+          ${a.fraud_probability.toFixed(3)}</div>
+        ${truth}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function select(i) {
+  selected = i;
+  const a = alerts[i];
+  if (!a) return;
+  renderFeed();
+  const max = Math.max(...a.reasons.map(r => r.contribution), 0.0001);
+  document.getElementById('detail').innerHTML = `
+    <dl class="kv">
+      <dt>Transaction</dt><dd>${a.txn_id}</dd>
+      <dt>Card</dt><dd>${a.card_id}</dd>
+      <dt>Amount</dt><dd>${fmt(a.amount)}</dd>
+      <dt>Merchant</dt><dd>${a.merchant}</dd>
+      <dt>Score</dt><dd>${a.fraud_probability.toFixed(4)} &rarr; ${a.decision}</dd>
+      <dt>Scored in</dt><dd>${a.latency_ms.toFixed(1)} ms</dd>
+    </dl>
+    <div class="why">Top contributing features (SHAP)</div>
+    ${a.reasons.map(r => `
+      <div class="reason">
+        <div class="txt"><span>${r.text}</span><span class="contrib">+${r.contribution.toFixed(2)}</span></div>
+        <div class="bar"><i style="width:${(r.contribution / max * 100).toFixed(1)}%"></i></div>
+      </div>`).join('')}
+    <div class="note">Contributions are SHAP values in log-odds space, so they
+      rank the drivers of this decision — they are not percentages of risk.</div>`;
+}
+
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>

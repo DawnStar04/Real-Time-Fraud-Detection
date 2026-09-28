@@ -1,0 +1,23 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    # Fraud history is rebuildable from the log, so persistence buys nothing
+    # here and costs latency on every write.
+    command: redis-server --save "" --appendonly no
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MODEL_PATH: /app/models/model.joblib
+      # Set this to the threshold train.py prints for your alert budget.
+      REVIEW_THRESHOLD: "0.35"
+      BLOCK_THRESHOLD: "0.85"
+    volumes:
+      - ./models:/app/models:ro
+    depends_on:
+      - redis
